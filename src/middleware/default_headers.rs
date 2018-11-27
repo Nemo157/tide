@@ -1,4 +1,5 @@
-use futures::future::FutureObj;
+use futures::future::BoxFuture;
+use futures::prelude::*;
 
 use http::{
     header::{HeaderValue, IntoHeaderName},
@@ -34,17 +35,15 @@ impl DefaultHeaders {
 }
 
 impl<Data: Clone + Send> Middleware<Data> for DefaultHeaders {
-    fn handle<'a>(&'a self, ctx: RequestContext<'a, Data>) -> FutureObj<'a, Response> {
-        FutureObj::new(Box::new(
-            async move {
-                let mut res = await!(ctx.next());
+    fn handle<'a>(&'a self, ctx: RequestContext<'a, Data>) -> BoxFuture<'a, Response> {
+        async move {
+            let mut res = await!(ctx.next());
 
-                let headers = res.headers_mut();
-                for (key, value) in self.headers.iter() {
-                    headers.entry(key).unwrap().or_insert_with(|| value.clone());
-                }
-                res
-            },
-        ))
+            let headers = res.headers_mut();
+            for (key, value) in self.headers.iter() {
+                headers.entry(key).unwrap().or_insert_with(|| value.clone());
+            }
+            res
+        }.boxed()
     }
 }

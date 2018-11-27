@@ -1,4 +1,5 @@
-use futures::future::{Future, FutureObj};
+use futures::future::{Future, BoxFuture};
+use futures::prelude::*;
 
 use crate::{extract::Extract, head::Head, IntoResponse, Request, Response, RouteMatch};
 
@@ -15,7 +16,7 @@ pub trait Endpoint<Data, Kind>: Send + Sync + 'static {
 }
 
 type BoxedEndpointFn<Data> =
-    dyn Fn(Data, Request, RouteMatch) -> FutureObj<'static, Response> + Send + Sync;
+    dyn Fn(Data, Request, RouteMatch) -> BoxFuture<'static, Response> + Send + Sync;
 
 pub(crate) struct BoxedEndpoint<Data> {
     endpoint: Box<BoxedEndpointFn<Data>>,
@@ -28,7 +29,7 @@ impl<Data> BoxedEndpoint<Data> {
     {
         BoxedEndpoint {
             endpoint: Box::new(move |data, request, params| {
-                FutureObj::new(Box::new(ep.call(data, request, params)))
+                ep.call(data, request, params).boxed()
             }),
         }
     }
@@ -38,7 +39,7 @@ impl<Data> BoxedEndpoint<Data> {
         data: Data,
         req: Request,
         params: RouteMatch<'_>,
-    ) -> FutureObj<'static, Response> {
+    ) -> BoxFuture<'static, Response> {
         (self.endpoint)(data, req, params)
     }
 }
@@ -68,13 +69,13 @@ macro_rules! end_point_impl_raw {
                 $X: Extract<Data>
             ),*
         {
-            type Fut = FutureObj<'static, Response>;
+            type Fut = BoxFuture<'static, Response>;
 
             #[allow(unused_mut, non_snake_case)]
             fn call(&self, mut data: Data, mut req: Request, params: RouteMatch<'_>) -> Self::Fut {
                 let f = self.clone();
                 $(let $X = $X::extract(&mut data, &mut req, &params);)*
-                FutureObj::new(Box::new(async move {
+                async move {
                     let (parts, _) = req.into_parts();
                     let head = Head::from(parts);
                     $(let $X = match await!($X) {
@@ -84,7 +85,7 @@ macro_rules! end_point_impl_raw {
                     let res = await!(call_f!($($head;)* (f, head); $($X),*));
 
                     res.into_response()
-                }))
+                }.boxed()
             }
         }
     };

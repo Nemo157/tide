@@ -1,6 +1,6 @@
 use futures::{
     compat::{Compat, Future01CompatExt},
-    future::{self, FutureObj},
+    future::{self, BoxFuture},
     prelude::*,
 };
 use hyper::service::Service;
@@ -100,7 +100,7 @@ impl<Data: Clone + Send + Sync + 'static> Service for Server<Data> {
     type ReqBody = hyper::Body;
     type ResBody = hyper::Body;
     type Error = std::io::Error;
-    type Future = Compat<FutureObj<'static, Result<http::Response<hyper::Body>, Self::Error>>>;
+    type Future = Compat<BoxFuture<'static, Result<http::Response<hyper::Body>, Self::Error>>>;
 
     fn call(&mut self, req: http::Request<hyper::Body>) -> Self::Future {
         let data = self.data.clone();
@@ -110,32 +110,29 @@ impl<Data: Clone + Send + Sync + 'static> Service for Server<Data> {
         let path = req.uri().path().to_owned();
         let method = req.method().to_owned();
 
-        FutureObj::new(Box::new(
-            async move {
-                if let Some(RouteResult {
-                    endpoint,
+        (async move {
+            if let Some(RouteResult {
+                endpoint,
+                params,
+                middleware,
+            }) = router.route(&path, &method)
+            {
+                let ctx = RequestContext {
+                    app_data: data,
+                    req,
                     params,
-                    middleware,
-                }) = router.route(&path, &method)
-                {
-                    let ctx = RequestContext {
-                        app_data: data,
-                        req,
-                        params,
-                        endpoint,
-                        next_middleware: middleware,
-                    };
-                    let res = await!(ctx.next());
-                    Ok(res.map(Into::into))
-                } else {
-                    Ok(http::Response::builder()
-                        .status(http::status::StatusCode::NOT_FOUND)
-                        .body(hyper::Body::empty())
-                        .unwrap())
-                }
-            },
-        ))
-        .compat()
+                    endpoint,
+                    next_middleware: middleware,
+                };
+                let res = await!(ctx.next());
+                Ok(res.map(Into::into))
+            } else {
+                Ok(http::Response::builder()
+                    .status(http::status::StatusCode::NOT_FOUND)
+                    .body(hyper::Body::empty())
+                    .unwrap())
+            }
+        }.boxed() as BoxFuture<_>).compat()
     }
 }
 

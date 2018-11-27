@@ -82,7 +82,7 @@ impl<Data: Clone + Send + Sync + 'static> Router<Data> {
     /// # #![feature(futures_api, async_await)]
     /// # fn passthrough_middleware<Data: Clone + Send>(
     /// #     ctx: tide::middleware::RequestContext<Data>,
-    /// # ) -> futures::future::FutureObj<tide::Response> {
+    /// # ) -> futures::future::BoxFuture<tide::Response> {
     /// #     ctx.next()
     /// # }
     /// # let mut app = tide::App::new(());
@@ -232,14 +232,14 @@ impl<'a, Data> Resource<'a, Data> {
 
 #[cfg(test)]
 mod tests {
-    use futures::{executor::block_on, future::FutureObj};
+    use futures::{executor::block_on, future::BoxFuture};
 
     use super::*;
     use crate::{body::Body, middleware::RequestContext, AppData, Response};
 
     fn passthrough_middleware<Data: Clone + Send>(
         ctx: RequestContext<Data>,
-    ) -> FutureObj<Response> {
+    ) -> BoxFuture<Response> {
         ctx.next()
     }
 
@@ -402,13 +402,11 @@ mod tests {
         struct Data(Vec<usize>);
         struct Pusher(usize);
         impl Middleware<Data> for Pusher {
-            fn handle<'a>(&'a self, mut ctx: RequestContext<'a, Data>) -> FutureObj<'a, Response> {
-                FutureObj::new(Box::new(
-                    async move {
-                        ctx.app_data.0.push(self.0);
-                        await!(ctx.next())
-                    },
-                ))
+            fn handle<'a>(&'a self, mut ctx: RequestContext<'a, Data>) -> BoxFuture<'a, Response> {
+                async move {
+                    ctx.app_data.0.push(self.0);
+                    await!(ctx.next())
+                }.boxed()
             }
         }
 

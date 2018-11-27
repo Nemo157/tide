@@ -3,7 +3,7 @@
 //! This module includes types like `Json`, which can be used to automatically (de)serialize bodies
 //! using `serde_json`.
 
-use futures::{compat::Compat01As03, future::FutureObj, prelude::*, stream::StreamObj};
+use futures::{compat::Compat01As03, future::BoxFuture, prelude::*, stream::BoxStream};
 use http::status::StatusCode;
 use multipart::server::Multipart;
 use pin_utils::pin_mut;
@@ -21,7 +21,7 @@ pub struct Body {
     inner: BodyInner,
 }
 
-type BodyStream = StreamObj<'static, Result<BodyChunk, Error>>;
+type BodyStream = BoxStream<'static, Result<BodyChunk, Error>>;
 type Error = Box<dyn std::error::Error + Send + Sync>;
 pub struct BodyChunk(hyper::Chunk);
 
@@ -95,7 +95,7 @@ impl From<hyper::Body> for Body {
             }
         });
         Body {
-            inner: BodyInner::Streaming(StreamObj::new(Box::new(stream))),
+            inner: BodyInner::Streaming(stream.boxed()),
         }
     }
 }
@@ -128,7 +128,7 @@ pub struct MultipartForm(pub Multipart<Cursor<Vec<u8>>>);
 
 impl<S: 'static> Extract<S> for MultipartForm {
     // Note: cannot use `existential type` here due to ICE
-    type Fut = FutureObj<'static, Result<Self, Response>>;
+    type Fut = BoxFuture<'static, Result<Self, Response>>;
 
     fn extract(data: &mut S, req: &mut Request, params: &RouteMatch<'_>) -> Self::Fut {
         // https://stackoverflow.com/questions/43424982/how-to-parse-multipart-forms-using-abonander-multipart-with-rocket
@@ -142,14 +142,12 @@ impl<S: 'static> Extract<S> for MultipartForm {
 
         let mut body = std::mem::replace(req.body_mut(), Body::empty());
 
-        FutureObj::new(Box::new(
-            async move {
-                let body = await!(body.read_to_vec()).map_err(mk_err)?;
-                let boundary = boundary.ok_or(()).map_err(mk_err)?;
-                let mp = Multipart::with_body(Cursor::new(body), boundary);
-                Ok(MultipartForm(mp))
-            },
-        ))
+        async move {
+            let body = await!(body.read_to_vec()).map_err(mk_err)?;
+            let boundary = boundary.ok_or(()).map_err(mk_err)?;
+            let mp = Multipart::with_body(Cursor::new(body), boundary);
+            Ok(MultipartForm(mp))
+        }.boxed()
     }
 }
 
@@ -174,17 +172,15 @@ pub struct Json<T>(pub T);
 
 impl<T: Send + serde::de::DeserializeOwned + 'static, S: 'static> Extract<S> for Json<T> {
     // Note: cannot use `existential type` here due to ICE
-    type Fut = FutureObj<'static, Result<Self, Response>>;
+    type Fut = BoxFuture<'static, Result<Self, Response>>;
 
     fn extract(data: &mut S, req: &mut Request, params: &RouteMatch<'_>) -> Self::Fut {
         let mut body = std::mem::replace(req.body_mut(), Body::empty());
-        FutureObj::new(Box::new(
-            async move {
-                let body = await!(body.read_to_vec()).map_err(mk_err)?;
-                let json: T = serde_json::from_slice(&body).map_err(mk_err)?;
-                Ok(Json(json))
-            },
-        ))
+        async move {
+            let body = await!(body.read_to_vec()).map_err(mk_err)?;
+            let json: T = serde_json::from_slice(&body).map_err(mk_err)?;
+            Ok(Json(json))
+        }.boxed()
     }
 }
 
@@ -221,17 +217,15 @@ pub struct Form<T>(pub T);
 
 impl<T: Send + serde::de::DeserializeOwned + 'static, S: 'static> Extract<S> for Form<T> {
     // Note: cannot use `existential type` here due to ICE
-    type Fut = FutureObj<'static, Result<Self, Response>>;
+    type Fut = BoxFuture<'static, Result<Self, Response>>;
 
     fn extract(data: &mut S, req: &mut Request, params: &RouteMatch<'_>) -> Self::Fut {
         let mut body = std::mem::replace(req.body_mut(), Body::empty());
-        FutureObj::new(Box::new(
-            async move {
-                let body = await!(body.read_to_vec()).map_err(mk_err)?;
-                let data: T = serde_qs::from_bytes(&body).map_err(mk_err)?;
-                Ok(Form(data))
-            },
-        ))
+        async move {
+            let body = await!(body.read_to_vec()).map_err(mk_err)?;
+            let data: T = serde_qs::from_bytes(&body).map_err(mk_err)?;
+            Ok(Form(data))
+        }.boxed()
     }
 }
 
@@ -264,18 +258,15 @@ impl<T> DerefMut for Form<T> {
 pub struct Str(pub String);
 
 impl<S: 'static> Extract<S> for Str {
-    type Fut = FutureObj<'static, Result<Self, Response>>;
+    type Fut = BoxFuture<'static, Result<Self, Response>>;
 
     fn extract(data: &mut S, req: &mut Request, params: &RouteMatch<'_>) -> Self::Fut {
         let mut body = std::mem::replace(req.body_mut(), Body::empty());
-
-        FutureObj::new(Box::new(
-            async move {
-                let body = await!(body.read_to_vec().map_err(mk_err))?;
-                let string = String::from_utf8(body).map_err(mk_err)?;
-                Ok(Str(string))
-            },
-        ))
+        async move {
+            let body = await!(body.read_to_vec().map_err(mk_err))?;
+            let string = String::from_utf8(body).map_err(mk_err)?;
+            Ok(Str(string))
+        }.boxed()
     }
 }
 
@@ -295,18 +286,16 @@ impl DerefMut for Str {
 pub struct StrLossy(pub String);
 
 impl<S: 'static> Extract<S> for StrLossy {
-    type Fut = FutureObj<'static, Result<Self, Response>>;
+    type Fut = BoxFuture<'static, Result<Self, Response>>;
 
     fn extract(data: &mut S, req: &mut Request, params: &RouteMatch<'_>) -> Self::Fut {
         let mut body = std::mem::replace(req.body_mut(), Body::empty());
 
-        FutureObj::new(Box::new(
-            async move {
-                let body = await!(body.read_to_vec().map_err(mk_err))?;
-                let string = String::from_utf8_lossy(&body).to_string();
-                Ok(StrLossy(string))
-            },
-        ))
+        async move {
+            let body = await!(body.read_to_vec().map_err(mk_err))?;
+            let string = String::from_utf8_lossy(&body).to_string();
+            Ok(StrLossy(string))
+        }.boxed()
     }
 }
 
@@ -326,17 +315,15 @@ impl DerefMut for StrLossy {
 pub struct Bytes(pub Vec<u8>);
 
 impl<S: 'static> Extract<S> for Bytes {
-    type Fut = FutureObj<'static, Result<Self, Response>>;
+    type Fut = BoxFuture<'static, Result<Self, Response>>;
 
     fn extract(data: &mut S, req: &mut Request, params: &RouteMatch<'_>) -> Self::Fut {
         let mut body = std::mem::replace(req.body_mut(), Body::empty());
 
-        FutureObj::new(Box::new(
-            async move {
-                let body = await!(body.read_to_vec().map_err(mk_err))?;
-                Ok(Bytes(body))
-            },
-        ))
+        async move {
+            let body = await!(body.read_to_vec().map_err(mk_err))?;
+            Ok(Bytes(body))
+        }.boxed()
     }
 }
 
