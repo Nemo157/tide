@@ -79,11 +79,11 @@ impl<State: Send + Sync + 'static> Middleware<State> for RequestLogger {
 /// An extension to [`Context`] that provides access to a request scoped logger
 pub trait ContextExt {
     /// returns a [`Logger`] scoped to this request
-    fn logger(&mut self) -> &Logger;
+    fn logger(&self) -> &Logger;
 }
 
 impl<State> ContextExt for Context<State> {
-    fn logger(&mut self) -> &Logger {
+    fn logger(&self) -> &Logger {
         self.extensions()
             .get::<Logger>()
             .expect("RequestLogger must be used to populate request logger")
