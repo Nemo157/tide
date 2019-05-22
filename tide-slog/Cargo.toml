@@ -25,6 +25,8 @@ log = "0.4.6"
 slog = "2.4.1"
 slog-async = "2.3.0"
 slog-term = "2.4.0"
+uuid = { version = "0.7.4", default-features = false, features = ["v4"] }
+bs58 = "0.2.2"
 
 [dev-dependencies]
 tide = { path = "../" }

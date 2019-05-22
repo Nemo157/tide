@@ -6,7 +6,7 @@
     missing_debug_implementations
 )]
 
-use slog::{info, o, trace, Drain};
+use slog::{info, o, trace, Drain, Logger};
 use slog_async;
 use slog_term;
 
@@ -16,13 +16,17 @@ use futures::prelude::*;
 use tide_core::{
     middleware::{Middleware, Next},
     Context, Response,
+    error::StringError,
 };
+
+const MIDDLEWARE_MISSING_MSG: &str =
+    "RequestLogger must be used to populate request logger";
 
 /// RequestLogger based on slog.SimpleLogger
 #[derive(Debug)]
 pub struct RequestLogger {
     // drain: dyn slog::Drain,
-    inner: slog::Logger,
+    inner: Logger,
 }
 
 impl RequestLogger {
@@ -30,7 +34,7 @@ impl RequestLogger {
         Default::default()
     }
 
-    pub fn with_logger(logger: slog::Logger) -> Self {
+    pub fn with_logger(logger: Logger) -> Self {
         Self { inner: logger }
     }
 }
@@ -41,24 +45,30 @@ impl Default for RequestLogger {
         let drain = slog_term::CompactFormat::new(decorator).build().fuse();
         let drain = slog_async::Async::new(drain).build().fuse();
 
-        let log = slog::Logger::root(drain, o!());
+        let log = Logger::root(drain, o!());
         Self { inner: log }
     }
+}
+
+fn request_id() -> String {
+    bs58::encode(uuid::Uuid::new_v4().as_bytes()).into_string()
 }
 
 /// Stores information during request phase and logs information once the response
 /// is generated.
 impl<State: Send + Sync + 'static> Middleware<State> for RequestLogger {
-    fn handle<'a>(&'a self, cx: Context<State>, next: Next<'a, State>) -> BoxFuture<'a, Response> {
+    fn handle<'a>(&'a self, mut cx: Context<State>, next: Next<'a, State>) -> BoxFuture<'a, Response> {
         FutureExt::boxed(async move {
+            let logger = self.inner.new(o!("request" => request_id()));
             let path = cx.uri().path().to_owned();
             let method = cx.method().as_str().to_owned();
-            trace!(self.inner, "IN => {} {}", method, path);
+            trace!(logger, "IN => {} {}", method, path);
             let start = std::time::Instant::now();
+            cx.extensions_mut().insert(logger.clone());
             let res = next.run(cx).await;
             let status = res.status();
             info!(
-                self.inner,
+                logger,
                 "{} {} {} {}ms",
                 method,
                 path,
@@ -67,5 +77,19 @@ impl<State: Send + Sync + 'static> Middleware<State> for RequestLogger {
             );
             res
         })
+    }
+}
+
+/// An extension to [`Context`] that provides access to a request scoped logger
+pub trait ContextExt {
+    /// returns a [`Logger`] scoped to this request
+    fn logger(&mut self) -> Result<&Logger, StringError>;
+}
+
+impl<State> ContextExt for Context<State> {
+    fn logger(&mut self) -> Result<&Logger, StringError> {
+        self.extensions()
+            .get::<Logger>()
+            .ok_or_else(|| StringError(MIDDLEWARE_MISSING_MSG.to_owned()))
     }
 }
