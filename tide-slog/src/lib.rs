@@ -16,11 +16,7 @@ use futures::prelude::*;
 use tide_core::{
     middleware::{Middleware, Next},
     Context, Response,
-    error::StringError,
 };
-
-const MIDDLEWARE_MISSING_MSG: &str =
-    "RequestLogger must be used to populate request logger";
 
 /// RequestLogger based on slog.SimpleLogger
 #[derive(Debug)]
@@ -83,13 +79,14 @@ impl<State: Send + Sync + 'static> Middleware<State> for RequestLogger {
 /// An extension to [`Context`] that provides access to a request scoped logger
 pub trait ContextExt {
     /// returns a [`Logger`] scoped to this request
-    fn logger(&mut self) -> Result<&Logger, StringError>;
+    fn logger(&mut self) -> &Logger;
 }
 
 impl<State> ContextExt for Context<State> {
-    fn logger(&mut self) -> Result<&Logger, StringError> {
+    fn logger(&mut self) -> &Logger {
         self.extensions()
             .get::<Logger>()
-            .ok_or_else(|| StringError(MIDDLEWARE_MISSING_MSG.to_owned()))
+            .expect("RequestLogger must be used to populate request logger")
+            // TODO ^ should this be an expect or return an error?
     }
 }
