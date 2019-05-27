@@ -1,8 +1,3 @@
-use tide_core::{
-    middleware::{Middleware, Next},
-    response::IntoResponse,
-    Context, Response,
-};
 use futures::{
     channel::oneshot,
     future::{BoxFuture, FutureExt, TryFutureExt},
@@ -11,19 +6,22 @@ use http::status::StatusCode;
 use std::{
     any::Any,
     future::Future,
+    panic::{AssertUnwindSafe, RefUnwindSafe},
     pin::Pin,
     sync::Mutex,
     task::{self, Poll},
-    marker::PhantomData,
-    panic::{RefUnwindSafe, AssertUnwindSafe},
+};
+use tide_core::{
+    middleware::{Middleware, Next},
+    response::IntoResponse,
+    Context, Response,
 };
 
 /// A [`Middleware`] that will catch any panics from later middleware or handlers and route them to
 /// a handle to be resumed elsewhere.
 #[derive(Debug)]
-pub struct PropagateUnwind<State: RefUnwindSafe + 'static> {
+pub struct PropagateUnwind {
     tx: Mutex<Option<oneshot::Sender<Box<dyn Any + Send + 'static>>>>,
-    state: PhantomData<fn(&'static State)>
 }
 
 #[must_use]
@@ -34,17 +32,16 @@ pub struct UnwindHandle {
     rx: oneshot::Receiver<Box<dyn Any + Send + 'static>>,
 }
 
-impl<State: RefUnwindSafe + 'static> PropagateUnwind<State> {
+impl PropagateUnwind {
     /// Create a [`PropagateUnwind`] along with its associated [`UnwindHandle`].
     pub fn new() -> (Self, UnwindHandle) {
         let (tx, rx) = oneshot::channel();
         let tx = Mutex::new(Some(tx));
-        let state = PhantomData;
-        (Self { tx, state }, UnwindHandle { rx })
+        (Self { tx }, UnwindHandle { rx })
     }
 }
 
-impl<State: RefUnwindSafe + 'static> Middleware<State> for PropagateUnwind<State> {
+impl<State: RefUnwindSafe + 'static> Middleware<State> for PropagateUnwind {
     fn handle<'a>(&'a self, cx: Context<State>, next: Next<'a, State>) -> BoxFuture<'a, Response> {
         AssertUnwindSafe(next.run(cx))
             .catch_unwind()
