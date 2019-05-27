@@ -14,5 +14,9 @@
 //! have a good understanding of how the different components involved in [`std::panic`] works.
 
 mod catch_unwind;
+mod propagate_unwind;
 
-pub use crate::catch_unwind::CatchUnwind;
+pub use crate::{
+    catch_unwind::CatchUnwind,
+    propagate_unwind::{PropagateUnwind, UnwindHandle},
+};
